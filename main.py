@@ -1,9 +1,11 @@
 from emails import *
-from fastapi import FastAPI, Request, HTTPException, status
+from fastapi import FastAPI, Request, HTTPException, status, Depends
 from tortoise.contrib.fastapi import register_tortoise
 from models import *
-from authenfication import (get_hashed_password, very_token)
 
+#authentification
+from authenfication import *
+from fastapi.security import(OAuth2PasswordBearer, OAuth2PasswordRequestForm)
 # signal
 from tortoise.signals import post_save
 from typing import List, Optional, Type
@@ -21,10 +23,44 @@ config_credentials = dotenv_values(".env")
 
 app = FastAPI()
 
+oath2_scheme = OAuth2PasswordBearer(tokenUrl='token')
+
+@app.post('/token')
+async def generate_token(request_from: OAuth2PasswordRequestForm = Depends()):
+    token = await token_generator(request_from.username, request_from.password)
+    return {"access_token" : token, "token_type" : "bearer"}
+
+async def get_current_user(token: str = Depends(oath2_scheme)):
+    try:
+        payload = jwt.decode(token, config_credential["SECRET"], algorithms=['HS256'])
+        user = await User.get(id = payload.get("id"))
+    except:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    return await user
+
+@app.post("/user/me")
+async def user_login(user: user_pydanticIn = Depends(get_current_user)):
+    business = await Business.get(owner = user)
+
+    return {
+        "status": "ok",
+        "data": 
+        {
+            "username": user.username,
+            "email": user.email,
+            "verified": user.is_verified,
+            "joined_data": user.join_date.strftime("%b %d %Y")
+        }
+    }
+
 
 @post_save(User)
 async def create_business(
-        sender: "Type[User]",
+        sender: "Type[User]", 
         instance: User,
         created: bool,
         using_db: "Optional[BaseDBAsyncClient]",
